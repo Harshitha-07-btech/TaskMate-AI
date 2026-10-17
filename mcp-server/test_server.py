@@ -93,7 +93,7 @@ class MCPServerTests(unittest.TestCase):
         self.assertEqual(parse_sse(initialized)["result"]["protocolVersion"], "2024-11-05")
         self.assertEqual(
             {tool["name"] for tool in parse_sse(listed)["result"]["tools"]},
-            {"list_tasks", "create_task", "delete_task"},
+            {"list_tasks", "create_task", "complete_task", "delete_task"},
         )
 
     def test_list_tasks_queries_supabase_and_returns_json_text(self):
@@ -187,6 +187,61 @@ class MCPServerTests(unittest.TestCase):
         result = parse_sse(response)["result"]
         self.assertTrue(result["isError"])
         self.assertIsNone(database.query.inserted_values)
+
+
+    def call_tool(self, name, arguments, database):
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }
+        with patch.object(server, "db", database):
+            return parse_sse(self.post_rpc(payload))["result"]
+
+    def test_complete_task_updates_only_the_named_task(self):
+        task_id = "11111111-1111-4111-8111-111111111111"
+        database = unittest.mock.Mock()
+        update = database.table.return_value.update
+        update.return_value.eq.return_value.execute.return_value = SimpleNamespace(
+            data=[{"id": task_id, "title": "Fixture", "status": "done"}]
+        )
+
+        result = self.call_tool("complete_task", {"task_id": task_id}, database)
+
+        self.assertFalse(result["isError"])
+        self.assertEqual(update.call_args.args[0]["status"], "done")
+        update.return_value.eq.assert_called_once_with("id", task_id)
+        self.assertEqual(json.loads(result["content"][0]["text"])["result"]["status"], "done")
+
+    def test_delete_task_is_disabled_by_default_and_never_touches_the_database(self):
+        database = unittest.mock.Mock()
+        with patch.dict(os.environ, {"TASKMATE_MCP_ALLOW_DELETE": ""}):
+            result = self.call_tool(
+                "delete_task", {"task_id": "11111111-1111-4111-8111-111111111111"}, database
+            )
+
+        self.assertTrue(result["isError"])
+        self.assertIn("disabled", result["content"][0]["text"])
+        database.table.assert_not_called()
+
+    def test_delete_task_runs_only_when_explicitly_enabled(self):
+        task_id = "11111111-1111-4111-8111-111111111111"
+        database = unittest.mock.Mock()
+        delete = database.table.return_value.delete
+        delete.return_value.eq.return_value.execute.return_value = SimpleNamespace(data=[{"id": task_id}])
+        with patch.dict(os.environ, {"TASKMATE_MCP_ALLOW_DELETE": "true"}):
+            result = self.call_tool("delete_task", {"task_id": task_id}, database)
+
+        self.assertFalse(result["isError"])
+        delete.return_value.eq.assert_called_once_with("id", task_id)
+
+    def test_task_id_tools_reject_non_uuid_ids_without_database_access(self):
+        database = unittest.mock.Mock()
+        result = self.call_tool("complete_task", {"task_id": "not-a-uuid"}, database)
+
+        self.assertTrue(result["isError"])
+        database.table.assert_not_called()
 
 
 if __name__ == "__main__":

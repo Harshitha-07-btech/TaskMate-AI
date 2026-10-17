@@ -1,52 +1,54 @@
-"""Run live ArmorIQ allow/deny checks; delete uses only an all-zero test UUID."""
+"""Live ArmorIQ allow/deny check through the same traced path the chat uses.
 
-import os
+Runs one allowed action (list_tasks, read-only) and one prohibited action
+(delete_task on the all-zero UUID, which matches no real task). Each runs in
+its own ArmorIQ session, so both appear in the ArmorIQ Trace Explorer.
+Prints the request (session) ID and trace ID for each, and never prints
+credentials or task contents.
+
+    backend\\.venv\\Scripts\\python.exe scripts\\security_demo.py
+"""
+
+import sys
 from pathlib import Path
 
-from armoriq_sdk import ArmorIQClient, PolicyBlockedException
-from dotenv import load_dotenv
-
 ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(ROOT / "backend" / ".env")
+sys.path.insert(0, str(ROOT / "backend"))
+
+import armoriq_runtime  # noqa: E402
+import main  # noqa: E402  (loads backend/.env and builds the ArmorIQ client)
+
+SENTINEL_TASK_ID = "00000000-0000-0000-0000-000000000000"
 
 
-def invoke(client: ArmorIQClient, action: str, params: dict):
-    prompt = f"Security demo: invoke {action} with the supplied test parameters."
-    plan = client.capture_plan(
-        llm="manual-security-demo",
-        prompt=prompt,
-        plan={
-            "goal": "Verify TaskMate MCP policy enforcement.",
-            "steps": [{"action": action, "mcp": "taskmate-mcp", "params": params}],
-        },
-    )
-    token = client.get_intent_token(plan, validity_seconds=300)
-    return client.invoke(
-        mcp="taskmate-mcp",
-        action=action,
-        intent_token=token,
-        params=params,
-    )
-
-
-def main():
-    if not os.getenv("GEMINI_MODEL"):
-        os.environ["GEMINI_MODEL"] = "gemini-2.5-flash"
-    client = ArmorIQClient.from_config(str(ROOT / "armoriq.yaml"))
-
-    allowed = invoke(client, "list_tasks", {"status": "all"})
-    if allowed.status != "success":
-        raise SystemExit("Allowed list_tasks action did not succeed.")
-    print("ALLOWED: taskmate-mcp.list_tasks returned successfully.")
-
-    sentinel_id = "00000000-0000-0000-0000-000000000000"
+def run(client, action, params):
+    request_id = armoriq_runtime.new_request_id()
     try:
-        invoke(client, "delete_task", {"task_id": sentinel_id})
-    except PolicyBlockedException:
-        print("BLOCKED: ArmorIQ denied taskmate-mcp.delete_task.")
-        return
-    raise SystemExit("FAIL: ArmorIQ did not block delete_task; no real task ID was used.")
+        result = armoriq_runtime.run_protected_action(
+            client, request_id=request_id, model="security-demo", action=action, params=params
+        )
+    except armoriq_runtime.ProtectedActionError as exc:
+        return exc.kind, request_id, exc.trace_id, exc.reason
+    return ("allowed" if result.invocation.status == "success" else "mcp_tool_error"), request_id, result.trace_id, None
+
+
+def main_demo():
+    client = main.get_armoriq_client()
+    outcomes = {
+        "list_tasks": run(client, "list_tasks", {"status": "all"}),
+        "delete_task": run(client, "delete_task", {"task_id": SENTINEL_TASK_ID}),
+    }
+    armoriq_runtime.wait_for_telemetry(30.0)
+
+    for action, (outcome, request_id, trace_id, reason) in outcomes.items():
+        print(f"{action:12} {outcome:15} session={request_id} trace={trace_id}" + (f" reason={reason}" if reason else ""))
+
+    if outcomes["list_tasks"][0] != "allowed":
+        raise SystemExit("FAIL: the allowed list_tasks action did not complete.")
+    if outcomes["delete_task"][0] != "policy_denied":
+        raise SystemExit("FAIL: ArmorIQ did not deny delete_task (no real task ID was used).")
+    print("PASS: list_tasks allowed; delete_task denied by ArmorIQ policy.")
 
 
 if __name__ == "__main__":
-    main()
+    main_demo()

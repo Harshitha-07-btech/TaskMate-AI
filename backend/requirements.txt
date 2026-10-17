@@ -23,3 +23,6 @@ google-genai>=2.31.0
 # pip install armoriq-sdk  |  from armoriq_sdk import ArmorIQClient
 # https://docs.armoriq.ai/sdk/installation
 armoriq-sdk>=0.6.10
+
+# IANA time zones for zoneinfo (Windows has no system tz database)
+tzdata>=2024.1

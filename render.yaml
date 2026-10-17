@@ -1,3 +1,8 @@
+# TaskMate AI on Render: three services from one Blueprint.
+# Secrets marked `sync: false` are entered in the Render dashboard when the
+# Blueprint is created; they are never stored in this file.
+# Free web services sleep after ~15 minutes without traffic; see README
+# "Deployment" for what that means for reminders and MCP cold starts.
 services:
   - type: web
     name: taskmate-mcp
@@ -6,11 +11,64 @@ services:
     autoDeployTrigger: 'off'
     buildCommand: pip install -r mcp-server/requirements.txt
     startCommand: 'uvicorn server:app --app-dir mcp-server --host 0.0.0.0 --port $PORT'
-    healthCheckPath: /openapi.json
+    healthCheckPath: /health
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.7
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_KEY
         sync: false
       - key: TASKMATE_MCP_BEARER_TOKEN
+        sync: false
+
+  - type: web
+    name: taskmate-api
+    runtime: python
+    plan: free
+    autoDeployTrigger: 'off'
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: 'uvicorn main:app --app-dir backend --host 0.0.0.0 --port $PORT'
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.7
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        sync: false
+      - key: ARMORIQ_API_KEY
+        sync: false
+      - key: TASKMATE_MCP_BEARER_TOKEN
+        sync: false
+      # The static site's URL, e.g. https://taskmate-web.onrender.com
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: TASKMATE_DEFAULT_TIMEZONE
+        value: UTC
+      - key: REMINDER_CRON_SECRET
+        generateValue: true
+      # Optional WhatsApp Business Platform (Cloud API) settings.
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_TEMPLATE_NAME
+        sync: false
+      - key: WHATSAPP_TEMPLATE_LANGUAGE
+        value: en
+
+  - type: web
+    name: taskmate-web
+    runtime: static
+    autoDeployTrigger: 'off'
+    buildCommand: cd frontend && npm ci && npm run build
+    staticPublishPath: frontend/dist
+    envVars:
+      # The API service's URL, e.g. https://taskmate-api.onrender.com
+      - key: VITE_API_BASE_URL
         sync: false

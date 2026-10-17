@@ -2962,3 +2962,244 @@ button {
     padding: 0 10px 16px;
   }
 }
+/* Security decisions in chat */
+.message-bubble.denied {
+  border: 1px solid #f0d8d3;
+  background: #fff5f2;
+  color: #8f3d31;
+}
+
+.message-bubble.error {
+  border: 1px solid #efe3c7;
+  background: #fffaf0;
+  color: #7a5a17;
+}
+
+.security-label {
+  display: inline-block;
+  margin-bottom: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.security-meta {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.security-meta code {
+  font-size: 9px;
+}
+
+/* Reminder bell and counts */
+.reminder-bell {
+  position: relative;
+  font-size: 16px;
+}
+
+.bell-count,
+.tab-count {
+  display: inline-grid;
+  min-width: 16px;
+  height: 16px;
+  place-items: center;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #c4473a;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.bell-count {
+  position: absolute;
+  top: 1px;
+  right: 0;
+}
+
+.overdue-count {
+  margin-left: 6px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #fff0ed;
+  color: #a9483d;
+  font-size: 9px;
+}
+
+.deadline-chip.overdue {
+  background: #c4473a;
+  color: #fff;
+}
+
+.deadline-chip.soon {
+  background: #fff4dc;
+  color: #8a5a00;
+}
+
+.highlighted-row td {
+  background: var(--green-soft);
+}
+
+/* Reminder center */
+.reminder-list {
+  display: grid;
+  gap: 8px;
+}
+
+.reminder-card {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--green);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.reminder-card.overdue {
+  border-left-color: #c4473a;
+}
+
+.reminder-card.deadline_day {
+  border-left-color: #d08a00;
+}
+
+.reminder-card.read {
+  opacity: 0.8;
+}
+
+.reminder-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.reminder-kind {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.reminder-kind.overdue {
+  color: #a9483d;
+}
+
+.reminder-message {
+  margin: 6px 0 8px;
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.reminder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.reminder-actions button,
+.reminder-deadline-form button {
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f7faf8;
+  color: var(--ink);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.reminder-actions button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.reminder-actions .reminder-primary {
+  border-color: var(--green);
+  background: var(--green);
+  color: #fff;
+}
+
+.reminder-actions .reminder-dismiss {
+  margin-left: auto;
+  font-size: 13px;
+}
+
+.reminder-deadline-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 9px;
+}
+
+.reminder-deadline-form input {
+  min-height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 10px;
+}
+
+.reminder-unavailable {
+  text-align: left;
+}
+
+/* Reminder settings */
+.checkbox-row {
+  display: flex !important;
+  align-items: center;
+  gap: 7px;
+  font-weight: 500;
+}
+
+.checkbox-row input {
+  width: auto !important;
+  min-height: 0 !important;
+}
+
+.link-button {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--green-dark);
+  font-size: 9px;
+  text-align: left;
+  text-decoration: underline;
+}
+
+.channel-box {
+  display: grid;
+  gap: 6px;
+  padding: 9px;
+  border: 1px dashed var(--line);
+  border-radius: 7px;
+  font-size: 10px;
+}
+
+.channel-box small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.channel-box .channel-warning {
+  color: #8a5a00;
+}
+
+@media (max-width: 620px) {
+  .reminder-actions button {
+    flex: 1 1 auto;
+  }
+
+  .reminder-actions .reminder-dismiss {
+    flex: 0 0 auto;
+  }
+}

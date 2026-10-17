@@ -8,7 +8,8 @@ This service exposes the TaskMate task tools in the HTTP JSON-RPC/SSE format req
 | --- | --- | --- |
 | `list_tasks` | Reads real rows from Supabase and supports `all`, `pending`, and `done` filters. | Allowed |
 | `create_task` | Validates task fields and inserts the row into Supabase. | Allowed |
-| `delete_task` | Deletes a task by ID. | Denied |
+| `complete_task` | Marks a task (by UUID) as done. | Allowed (after `armoriq register`) |
+| `delete_task` | Deletes a task by UUID, but only when `TASKMATE_MCP_ALLOW_DELETE=true`; disabled by default as a second layer behind ArmorIQ's deny. | Denied |
 
 The MCP endpoint implements `initialize`, `tools/list`, and `tools/call`. The server returns 503 until `TASKMATE_MCP_BEARER_TOKEN` is configured; it never starts as an unauthenticated task endpoint.
 
@@ -34,7 +35,7 @@ The root [`render.yaml`](../render.yaml) describes this existing service. In Ren
 
 Render supplies `PORT` automatically. The Blueprint starts Uvicorn bound to `0.0.0.0` on that port. Do not set `PORT` yourself.
 
-After the first deployment, check the public `/openapi.json` health path and test `/mcp` using an authenticated JSON-RPC request. A request without the bearer token must receive HTTP 401. The MCP URL for later ArmorIQ validation is `https://<your-render-service>.onrender.com/mcp`; update `armoriq.yaml` only after Render provides the service hostname. The current checked-in ArmorIQ URL is local, and this step does not register or deploy the service.
+After the first deployment, check the public `/health` path and test `/mcp` using an authenticated JSON-RPC request. A request without the bearer token must receive HTTP 401. The MCP URL for later ArmorIQ validation is `https://<your-render-service>.onrender.com/mcp`; update `armoriq.yaml` only after Render provides the service hostname.
 
 ## Test and demo
 

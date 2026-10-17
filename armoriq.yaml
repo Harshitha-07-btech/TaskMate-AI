@@ -6,8 +6,8 @@
 # armoriq.yaml reference: https://docs.armoriq.ai/platform/sdk-cli/armoriq-yaml
 #
 # Values beginning with $ are resolved from the process environment.
-# ArmorIQ CLI 0.6.10 does not expand env references in mcp_servers[].url.
-# This local URL is for validation only; replace it with the deployed HTTPS URL before registration.
+# ArmorIQ CLI 0.6.10 does not expand env references in mcp_servers[].url, so
+# the deployed MCP URL is written literally below.
 
 version: v1
 environment: production
@@ -30,10 +30,15 @@ mcp_servers:
       type: bearer
       token: $TASKMATE_MCP_BEARER_TOKEN
 
+# Agent policy for chat-initiated actions. The chat can read, create, and
+# complete tasks; permanent deletion is denied so ArmorIQ blocks it before the
+# MCP server is reached. complete_task requires re-running `armoriq register`
+# after the MCP server with that tool is deployed.
 policy:
   allow:
     - taskmate-mcp.list_tasks
     - taskmate-mcp.create_task
+    - taskmate-mcp.complete_task
   deny:
     - taskmate-mcp.delete_task
 

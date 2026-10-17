@@ -4,7 +4,8 @@ import hmac
 import json
 import os
 from pathlib import Path
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from dotenv import load_dotenv
@@ -81,6 +82,21 @@ TOOLS = [
         },
     },
     {
+        "name": "complete_task",
+        "description": "Mark a task as completed by its database ID.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "ID of the task to complete.",
+                }
+            },
+            "required": ["task_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "delete_task",
         "description": "Permanently delete a task by its database ID.",
         "inputSchema": {
@@ -133,7 +149,37 @@ def list_tasks(status: str = "all") -> list[dict[str, Any]]:
     return query.execute().data
 
 
+def require_task_id(arguments: dict[str, Any], tool: str) -> str:
+    if set(arguments) != {"task_id"} or not isinstance(arguments["task_id"], str):
+        raise ValueError(f"{tool} requires a string task_id.")
+    try:
+        return str(uuid.UUID(arguments["task_id"]))
+    except ValueError:
+        raise ValueError("Task not found.") from None
+
+
+def deletes_enabled() -> bool:
+    # Defense in depth behind ArmorIQ's deny policy: even if that policy were
+    # misconfigured, agent deletions stay off unless explicitly enabled here.
+    return os.getenv("TASKMATE_MCP_ALLOW_DELETE", "").strip().lower() in {"1", "true", "yes"}
+
+
+def complete_task(task_id: str) -> dict[str, Any]:
+    result = (
+        require_database()
+        .table("tasks")
+        .update({"status": "done", "updated_at": datetime.now(timezone.utc).isoformat()})
+        .eq("id", task_id)
+        .execute()
+    )
+    if not result.data:
+        raise ValueError("Task not found.")
+    return result.data[0]
+
+
 def delete_task(task_id: str) -> dict[str, Any]:
+    if not deletes_enabled():
+        raise ValueError("Task deletion is disabled on this MCP server.")
     result = require_database().table("tasks").delete().eq("id", task_id).execute()
     if not result.data:
         raise ValueError("Task not found.")
@@ -174,10 +220,10 @@ def execute_tool(name: str, arguments: dict[str, Any]) -> Any:
             return create_task(arguments)
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
+    if name == "complete_task":
+        return complete_task(require_task_id(arguments, name))
     if name == "delete_task":
-        if set(arguments) != {"task_id"} or not isinstance(arguments["task_id"], str):
-            raise ValueError("delete_task requires a string task_id.")
-        return delete_task(arguments["task_id"])
+        return delete_task(require_task_id(arguments, name))
     raise LookupError("Unknown tool.")
 
 
@@ -254,6 +300,11 @@ def require_bearer_auth(request: Request) -> None:
         supplied[len(prefix) :], expected
     ):
         raise HTTPException(status_code=401, detail="Unauthorized.")
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "service": "TaskMate MCP", "supabase_configured": db is not None}
 
 
 @app.post("/mcp")

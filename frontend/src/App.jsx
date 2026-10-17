@@ -1,18 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { API, API_CONFIGURED, browserTimeZone, errorDetail } from "./api";
+import { ReminderCenter, ReminderSettings, UpcomingReminders, useReminders } from "./Reminders";
 
-const API = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
-const tabs = ["My Tasks", "Calendar", "Documents"];
+const tabs = ["My Tasks", "Reminders", "Calendar", "Documents"];
 const CONVERSATION_STORAGE_KEY = "taskmate.ai.conversations.v1";
-
-// FastAPI returns `detail` as a string, or as a list of field errors on 422.
-function errorDetail(data, fallback) {
-  const detail = data?.detail;
-  if (typeof detail === "string" && detail.trim()) return detail;
-  if (Array.isArray(detail) && detail.length) {
-    return detail.map((item) => item?.msg).filter(Boolean).join(" ") || fallback;
-  }
-  return fallback;
-}
+// Longer than the backend's own bounds (Gemini deadline 60s + ArmorIQ/MCP
+// timeouts), so the server normally answers first with a specific error.
+const CHAT_TIMEOUT_MS = 150_000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Agent error types that mean ArmorIQ evaluated the action and did not allow it.
+const SECURITY_DECISIONS = new Set(["policy_denied", "policy_hold"]);
 
 function readStoredJson(key, fallback) {
   try {
@@ -45,6 +42,13 @@ function toLocalDateTime(value, endOfDay = false) {
 function formatDate(value, options = { day: "numeric", month: "short" }) {
   if (!value) return "Not set";
   return new Date(value).toLocaleDateString(undefined, options);
+}
+
+function deadlineState(task) {
+  if (!task.due_at || task.status === "done") return "";
+  const remaining = new Date(task.due_at) - new Date();
+  if (remaining < 0) return "overdue";
+  return remaining <= DAY_MS ? "soon" : "";
 }
 
 function formatTime(value) {
@@ -168,6 +172,7 @@ export default function App() {
   const taskDeletesInFlight = useRef(new Set());
   const [updatingTaskIds, setUpdatingTaskIds] = useState(() => new Set());
   const [deletingTaskIds, setDeletingTaskIds] = useState(() => new Set());
+  const [highlightedTaskId, setHighlightedTaskId] = useState(null);
   const activeConversation = conversations.find(
     (conversation) => conversation.id === activeConversationId
   );
@@ -177,15 +182,29 @@ export default function App() {
     setLoading(true);
     setError("");
 
-    try {
-      const response = await fetch(`${API}/tasks?status=all`);
-      if (!response.ok) throw new Error("Could not load tasks.");
-      const data = await response.json();
-      setTasks(data.tasks || []);
-      setBackendStatus("online");
-    } catch {
-      setError("Cannot reach the backend. Make sure FastAPI is running.");
+    if (!API_CONFIGURED) {
+      setError("This build has no backend URL. Set VITE_API_BASE_URL and rebuild the frontend.");
       setBackendStatus("offline");
+      setLoading(false);
+      return;
+    }
+    let response;
+    try {
+      response = await fetch(`${API}/tasks?status=all`);
+    } catch {
+      setError("Cannot reach the backend. Make sure FastAPI is running; TaskMate will reconnect automatically.");
+      setBackendStatus("offline");
+      setLoading(false);
+      return;
+    }
+    try {
+      const data = await response.json().catch(() => ({}));
+      // The backend answered, so it is reachable even when the request failed.
+      setBackendStatus("online");
+      if (!response.ok) throw new Error(errorDetail(data, "Could not load tasks."));
+      setTasks(data.tasks || []);
+    } catch (err) {
+      setError(err.message || "Could not load tasks.");
     } finally {
       setLoading(false);
     }
@@ -194,6 +213,24 @@ export default function App() {
   useEffect(() => {
     loadTasks();
   }, [loadTasks]);
+
+  // Recover on its own after a backend restart instead of keeping a stale banner.
+  useEffect(() => {
+    if (backendStatus !== "offline" || !API_CONFIGURED) return undefined;
+    const timer = setInterval(loadTasks, 10_000);
+    return () => clearInterval(timer);
+  }, [backendStatus, loadTasks]);
+
+  const reminders = useReminders({ onTaskChanged: updateTaskFromResponse });
+
+  function openTask(taskId) {
+    setActiveTab("My Tasks");
+    setFilter("all");
+    setHighlightedTaskId(taskId);
+    requestAnimationFrame(() =>
+      document.getElementById(`task-row-${taskId}`)?.scrollIntoView({ block: "center", behavior: "smooth" })
+    );
+  }
 
   useEffect(() => {
     try {
@@ -236,14 +273,7 @@ export default function App() {
     }
     return [...groups.entries()];
   }, [visibleConversations]);
-  const upcomingDeadlines = useMemo(
-    () =>
-      pendingTasks
-        .filter((task) => task.due_at && new Date(task.due_at) >= new Date())
-        .sort((first, second) => new Date(first.due_at) - new Date(second.due_at))
-        .slice(0, 3),
-    [pendingTasks]
-  );
+  const overdueCount = pendingTasks.filter((task) => deadlineState(task) === "overdue").length;
   const overlaps = useMemo(() => findOverlaps(tasks), [tasks]);
   const scheduledCount = tasks.filter(
     (task) => task.scheduled_start && task.scheduled_end
@@ -340,6 +370,7 @@ export default function App() {
         current.map((item) => (item.id === updatedTask.id ? updatedTask : item))
       );
       setTaskNotice(updatedTask.status === "done" ? "Task completed." : "Task reopened.");
+      reminders.refresh();
     } catch (err) {
       setTaskError(err.message || "Task status couldn't be updated.");
     } finally {
@@ -374,6 +405,7 @@ export default function App() {
         throw new Error("The server didn't confirm this task deletion.");
       }
       setTasks((current) => current.filter((item) => item.id !== task.id));
+      reminders.refresh();
     } catch (err) {
       setTaskError(err.message || "Task couldn't be deleted.");
     } finally {
@@ -428,22 +460,30 @@ export default function App() {
     if (chatInFlight.current) return;
     chatInFlight.current = true;
     setChatBusy(true);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
     try {
       const response = await fetch(`${API}/agent/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: content }),
+        body: JSON.stringify({ message: content, timezone: browserTimeZone() }),
+        signal: controller.signal,
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const detail = errorDetail(data, "TaskMate couldn't get a response. Please try again.");
-        throw new Error(detail);
+        const error = new Error(errorDetail(data, "TaskMate couldn't get a response. Please try again."));
+        error.data = data;
+        throw error;
       }
-      if (data.action === "create_task") {
+      if (data.action === "create_task" || data.action === "complete_task") {
         if (!data.task?.id) {
-          throw new Error("TaskMate couldn't confirm that the task was saved.");
+          throw new Error("TaskMate couldn't confirm the saved task.");
         }
         updateTaskFromResponse(data.task);
+        reminders.refresh();
+      }
+      if (data.action === "delete_task" && data.deleted_task_id) {
+        setTasks((current) => current.filter((item) => item.id !== data.deleted_task_id));
       }
       if (typeof data.reply !== "string" || !data.reply.trim()) {
         throw new Error("Gemini returned no text. Please try again.");
@@ -451,14 +491,29 @@ export default function App() {
       appendMessage(conversationId, {
         role: "assistant",
         content: data.reply.trim(),
+        ...(data.action
+          ? { security: { decision: "allow", action: data.action, traceId: data.trace_id, requestId: data.request_id } }
+          : {}),
       });
     } catch (err) {
+      const data = err.data || {};
       const message =
-        err.message === "Failed to fetch"
+        err.name === "AbortError"
+          ? "TaskMate didn't respond in time. Refresh your task list before trying again, in case the action still completed."
+          : err.message === "Failed to fetch"
           ? "TaskMate couldn't reach the chat service. Check that the backend is running."
           : err.message || "TaskMate couldn't get a response. Please try again.";
-      appendMessage(conversationId, { role: "assistant", content: message });
+      if (err.name === "AbortError") loadTasks();
+      appendMessage(conversationId, {
+        role: "assistant",
+        content: message,
+        tone: SECURITY_DECISIONS.has(data.error_type) ? "denied" : "error",
+        ...(data.request_id || data.trace_id
+          ? { security: { decision: data.error_type || "error", reason: data.reason, traceId: data.trace_id, requestId: data.request_id } }
+          : {}),
+      });
     } finally {
+      clearTimeout(timer);
       chatInFlight.current = false;
       setChatBusy(false);
     }
@@ -607,11 +662,21 @@ export default function App() {
             <p><span className={`status-dot ${backendStatus}`} />{backendStatus === "online" ? "Online · Tasks connected" : backendStatus === "offline" ? "Backend unavailable" : "Connecting to backend"}</p>
           </div>
           <button
-            className="icon-button chat-menu"
+            className="icon-button chat-menu reminder-bell"
+            type="button"
+            aria-label={`Reminders, ${reminders.unreadCount} unread`}
+            title="Reminders"
+            onClick={() => setActiveTab("Reminders")}
+          >
+            <span aria-hidden="true">🔔</span>
+            {reminders.unreadCount > 0 && <span className="bell-count">{reminders.unreadCount}</span>}
+          </button>
+          <button
+            className="icon-button"
             type="button"
             aria-label="Refresh tasks"
             title="Refresh tasks"
-            onClick={loadTasks}
+            onClick={() => { loadTasks(); reminders.refresh(); }}
           >
             ↻
           </button>
@@ -623,9 +688,9 @@ export default function App() {
             <div className="chat-empty-state">
               <div className="empty-assistant-avatar"><RobotMascot /></div>
               <h2>Hi, I’m your Task Assistant</h2>
-              <p>Ask me anything. This chat handles text conversation only and can’t read or change saved tasks yet; use the workspace to manage your list.</p>
+              <p>Ask me to list, add, or complete tasks. ArmorIQ policy checks every task action I take before it reaches your list.</p>
               <div className="example-prompts" aria-label="Example prompts">
-                {["Show my open tasks", "Add a task to review my project tomorrow", "Finish my project today. Add it to my tasks."].map((prompt) => (
+                {["Show my open tasks", "Add a task to review my project tomorrow", "Mark my project review as done"].map((prompt) => (
                   <button type="button" key={prompt} onClick={() => setDraft(prompt)}>{prompt}</button>
                 ))}
               </div>
@@ -635,8 +700,19 @@ export default function App() {
               {messages.map((message, index) => (
                 <div className={`message-row ${message.role}`} key={message.id || `${index}-${message.role}`}>
                   {message.role === "assistant" && <span className="message-avatar"><RobotMascot /></span>}
-                  <div className="message-bubble">
+                  <div className={`message-bubble ${message.tone || ""}`}>
+                    {message.tone === "denied" && <span className="security-label">Blocked by ArmorIQ policy</span>}
                     <p>{message.content}</p>
+                    {message.security && (
+                      <small className="security-meta">
+                        {message.security.decision === "allow"
+                          ? `Authorized by ArmorIQ · ${message.security.action}`
+                          : message.security.reason
+                            ? `Reason: ${message.security.reason}`
+                            : "Not confirmed"}
+                        {message.security.traceId && <> · trace <code>{message.security.traceId}</code></>}
+                      </small>
+                    )}
                   </div>
                 </div>
               ))}
@@ -676,8 +752,9 @@ export default function App() {
               onClick={() => setActiveTab(tab)}
               type="button"
             >
-              <span aria-hidden="true">{tab === "My Tasks" ? "✓" : tab === "Calendar" ? "▦" : "▧"}</span>
+              <span aria-hidden="true">{tab === "My Tasks" ? "✓" : tab === "Reminders" ? "◷" : tab === "Calendar" ? "▦" : "▧"}</span>
               {tab}
+              {tab === "Reminders" && reminders.unreadCount > 0 && <span className="tab-count">{reminders.unreadCount}</span>}
             </button>
           ))}
         </nav>
@@ -693,7 +770,7 @@ export default function App() {
             </button>
             <section className="task-table-section" aria-label="Tasks">
               <div className="table-toolbar">
-                <h2>My Tasks <span>{tasks.length}</span></h2>
+                <h2>My Tasks <span>{tasks.length}</span>{overdueCount > 0 && <span className="overdue-count">{overdueCount} overdue</span>}</h2>
                 <select aria-label="Filter tasks" value={filter} onChange={(event) => setFilter(event.target.value)}>
                   <option value="all">All</option>
                   <option value="pending">Open</option>
@@ -715,7 +792,7 @@ export default function App() {
                     <thead><tr><th className="checkbox-column"><span className="visually-hidden">Complete</span></th><th>Task</th><th>Timeline</th><th>Deadline</th><th>Docs</th><th>Status</th><th><span className="visually-hidden">Actions</span></th></tr></thead>
                     <tbody>
                       {visibleTasks.map((task) => (
-                        <tr key={task.id}>
+                        <tr key={task.id} id={`task-row-${task.id}`} className={highlightedTaskId === task.id ? "highlighted-row" : ""}>
                           <td className="checkbox-column">
                             <input
                               type="checkbox"
@@ -727,7 +804,7 @@ export default function App() {
                           </td>
                           <td className="task-name-cell"><span className={task.status === "done" ? "task-complete" : ""}>{task.title}</span></td>
                           <td><span className="date-chip timeline-chip">{formatPlannedPeriod(task)}</span></td>
-                          <td><span className="date-chip deadline-chip">{task.due_at ? formatDate(task.due_at, { day: "numeric", month: "short", year: "numeric" }) : "Not set"}</span></td>
+                          <td><span className={`date-chip deadline-chip ${deadlineState(task)}`} title={task.due_at ? new Date(task.due_at).toLocaleString() : undefined}>{deadlineState(task) === "overdue" ? "Overdue · " : deadlineState(task) === "soon" ? "Due soon · " : ""}{task.due_at ? formatDate(task.due_at, { day: "numeric", month: "short", year: "numeric" }) : "Not set"}</span></td>
                           <td className="document-cell">
                             {safeDocumentUrl(task.document_url) ? <a href={task.document_url} target="_blank" rel="noopener noreferrer" aria-label={`Open document for ${task.title}`} title="Open saved document link">↗</a> : <span aria-label="No safe document link">—</span>}
                           </td>
@@ -783,6 +860,16 @@ export default function App() {
           </>
         )}
 
+        {activeTab === "Reminders" && (
+          <>
+            <section className="tab-content-section">
+              <div className="section-heading"><div><h2>Reminders</h2><p>Deadline check-ins for your open tasks.</p></div></div>
+              <ReminderCenter state={reminders} onOpenTask={openTask} />
+            </section>
+            <ReminderSettings state={reminders} />
+          </>
+        )}
+
         {activeTab === "Calendar" && (
           <section className="tab-content-section">
             <div className="section-heading"><div><h2>Calendar</h2><p>Saved task dates only. No external calendar is connected.</p></div></div>
@@ -821,12 +908,8 @@ export default function App() {
         )}
 
         <section className="insight-section">
-          <div className="insight-heading"><span className="insight-icon reminder-icon">◷</span><div><h2>Upcoming reminders</h2><p>Deadline overview only · notifications are not configured.</p></div></div>
-          {upcomingDeadlines.length ? (
-            <div className="deadline-list">
-              {upcomingDeadlines.map((task) => <div className="deadline-item" key={task.id}><span className="deadline-marker" aria-hidden="true">•</span><span><strong>{task.title}</strong><small>Due {formatDate(task.due_at, { day: "numeric", month: "short", year: "numeric" })}</small></span></div>)}
-            </div>
-          ) : <p className="insight-empty">No upcoming task deadlines.</p>}
+          <div className="insight-heading"><span className="insight-icon reminder-icon">◷</span><div><h2>Upcoming reminders</h2><p>{reminders.channels?.whatsapp?.configured ? "In-app, plus WhatsApp if you opt in." : "In-app only · WhatsApp is not configured."}</p></div></div>
+          <UpcomingReminders state={reminders} />
         </section>
 
         <section className="insight-section conflict-section">
