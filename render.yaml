@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: taskmate-mcp
+    runtime: python
+    autoDeployTrigger: 'off'
+    buildCommand: pip install -r mcp-server/requirements.txt
+    startCommand: 'uvicorn server:app --app-dir mcp-server --host 0.0.0.0 --port $PORT'
+    healthCheckPath: /openapi.json
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: TASKMATE_MCP_BEARER_TOKEN
+        sync: false

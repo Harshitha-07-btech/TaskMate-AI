@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://docs.armoriq.ai/schemas/armoriq.schema.json
+#
+# TaskMate AI — ArmorIQ Configuration
+# ====================================
+# All fields and values in this file are verified against the official
+# armoriq.yaml reference: https://docs.armoriq.ai/platform/sdk-cli/armoriq-yaml
+#
+# Values beginning with $ are resolved from the process environment.
+# ArmorIQ CLI 0.6.10 does not expand env references in mcp_servers[].url.
+# This local URL is for validation only; replace it with the deployed HTTPS URL before registration.
+
+version: v1
+environment: sandbox
+
+identity:
+  api_key: $ARMORIQ_API_KEY      # set via env var — never hard-code
+  user_id: taskmate-service       # identifier for this service/worker
+  agent_id: taskmate-bot          # identifier for the agent persona
+
+proxy:
+  url: https://proxy.armoriq.ai  # ArmorIQ proxy — auto-resolved, keep as-is
+  timeout: 30                     # seconds
+  max_retries: 3
+
+mcp_servers:
+  - id: taskmate-mcp
+    url: http://127.0.0.1:8001/mcp
+    description: TaskMate task-management tools
+    auth:
+      type: bearer
+      token: $TASKMATE_MCP_BEARER_TOKEN
+
+policy:
+  allow:
+    - taskmate-mcp.list_tasks
+    - taskmate-mcp.create_task
+  deny:
+    - taskmate-mcp.delete_task
+
+intent:
+  ttl_seconds: 300                # intent tokens expire after 5 minutes
+  require_csrg: true
