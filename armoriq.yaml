@@ -10,7 +10,7 @@
 # This local URL is for validation only; replace it with the deployed HTTPS URL before registration.
 
 version: v1
-environment: sandbox
+environment: production
 
 identity:
   api_key: $ARMORIQ_API_KEY      # set via env var — never hard-code
@@ -24,7 +24,7 @@ proxy:
 
 mcp_servers:
   - id: taskmate-mcp
-    url: http://127.0.0.1:8001/mcp
+    url: https://taskmate-mcp.onrender.com/mcp
     description: TaskMate task-management tools
     auth:
       type: bearer

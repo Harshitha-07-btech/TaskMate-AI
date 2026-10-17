@@ -2,10 +2,16 @@ import json
 import os
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call as mock_call, patch
 
 import httpx
-from armoriq_sdk import ConfigurationException, PolicyBlockedException
+from armoriq_sdk import (
+    ConfigurationException,
+    IntentMismatchException,
+    InvalidTokenException,
+    MCPInvocationException,
+    PolicyBlockedException,
+)
 from fastapi.testclient import TestClient
 from google.genai import errors as genai_errors
 
@@ -147,6 +153,33 @@ class AgentSecurityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["action"], "list_tasks")
         self.assertIn("Fixture task (open)", response.json()["reply"])
+        plan = {
+            "goal": "Complete the user's TaskMate request using list_tasks.",
+            "steps": [
+                {
+                    "action": "list_tasks",
+                    "mcp": "taskmate-mcp",
+                    "params": {"status": "pending"},
+                }
+            ],
+        }
+        self.assertEqual(
+            armoriq_client.mock_calls,
+            [
+                mock_call.capture_plan(
+                    llm="gemini-3.8-flash",
+                    prompt="Show my open tasks",
+                    plan=plan,
+                ),
+                mock_call.get_intent_token("captured-plan", validity_seconds=300),
+                mock_call.invoke(
+                    mcp="taskmate-mcp",
+                    action="list_tasks",
+                    intent_token="intent-token",
+                    params={"status": "pending"},
+                ),
+            ],
+        )
         armoriq_client.invoke.assert_called_once_with(
             mcp="taskmate-mcp",
             action="list_tasks",
@@ -179,6 +212,49 @@ class AgentSecurityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertNotIn("task", response.json())
         self.assertNotIn("Added", response.json()["detail"])
+
+    def test_intent_and_mcp_failures_have_distinct_responses(self):
+        failures = [
+            (
+                InvalidTokenException("synthetic invalid token"),
+                502,
+                "fresh intent token",
+            ),
+            (
+                IntentMismatchException("synthetic plan mismatch"),
+                409,
+                "captured intent plan",
+            ),
+            (
+                MCPInvocationException("synthetic MCP failure"),
+                502,
+                "could not complete the MCP invocation",
+            ),
+        ]
+        for failure, expected_status, expected_detail in failures:
+            with self.subTest(failure=type(failure).__name__):
+                call_step = SimpleNamespace(
+                    type="function_call",
+                    id="function-call-list",
+                    name="list_tasks",
+                    arguments={},
+                )
+                gemini_client = self.build_gemini_client(steps=[call_step])
+                armoriq_client = self.build_armor_client(None)
+                armoriq_client.invoke.side_effect = failure
+
+                with (
+                    patch.dict(os.environ, {"GEMINI_API_KEY": "unit-test-key"}),
+                    patch.object(main.genai, "Client", return_value=gemini_client),
+                    patch.object(main, "get_armoriq_client", return_value=armoriq_client),
+                ):
+                    response = self.http.post(
+                        "/agent/chat", json={"message": "Show my tasks"}
+                    )
+
+                self.assertEqual(response.status_code, expected_status)
+                self.assertIn(expected_detail, response.json()["detail"])
+                self.assertNotIn("reachable", response.json()["detail"])
 
     def test_missing_armor_iq_configuration_fails_closed_without_success(self):
         call = SimpleNamespace(
@@ -370,6 +446,41 @@ class AgentSecurityTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["detail"], "Gemini is not configured.")
+
+
+class ArmorIQClientConfigTests(unittest.TestCase):
+    """Regression: the proxy must receive the resolved MCP bearer token.
+
+    from_config() dropped mcp_servers[].auth, so ArmorIQ called the MCP server
+    with the wrong bearer and its 401 surfaced as InvalidTokenException
+    ("Token verification failed: {'detail': 'Unauthorized.'}").
+    """
+
+    def test_client_sends_resolved_mcp_bearer_from_project_config(self):
+        env = {"ARMORIQ_API_KEY": "ak_live_unit", "TASKMATE_MCP_BEARER_TOKEN": "unit-bearer"}
+        with (
+            patch.dict(os.environ, env),
+            patch.object(main, "ArmorIQClient") as client_class,
+        ):
+            main.build_armoriq_client(main.ARMORIQ_CONFIG)
+
+        kwargs = client_class.call_args.kwargs
+        self.assertEqual(
+            kwargs["mcp_credentials"],
+            {"taskmate-mcp": {"authType": "bearer", "token": "unit-bearer"}},
+        )
+        self.assertEqual(kwargs["api_key"], "ak_live_unit")
+        self.assertTrue(kwargs["use_production"])
+
+    def test_missing_mcp_bearer_fails_closed(self):
+        env = {"ARMORIQ_API_KEY": "ak_live_unit", "TASKMATE_MCP_BEARER_TOKEN": ""}
+        with (
+            patch.dict(os.environ, env),
+            patch.object(main, "ArmorIQClient") as client_class,
+        ):
+            with self.assertRaises(ConfigurationException):
+                main.build_armoriq_client(main.ARMORIQ_CONFIG)
+        client_class.assert_not_called()
 
 
 if __name__ == "__main__":

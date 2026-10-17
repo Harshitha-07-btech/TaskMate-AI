@@ -4,6 +4,16 @@ const API = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 const tabs = ["My Tasks", "Calendar", "Documents"];
 const CONVERSATION_STORAGE_KEY = "taskmate.ai.conversations.v1";
 
+// FastAPI returns `detail` as a string, or as a list of field errors on 422.
+function errorDetail(data, fallback) {
+  const detail = data?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail) && detail.length) {
+    return detail.map((item) => item?.msg).filter(Boolean).join(" ") || fallback;
+  }
+  return fallback;
+}
+
 function readStoredJson(key, fallback) {
   try {
     const value = localStorage.getItem(key);
@@ -280,8 +290,8 @@ export default function App() {
         body: JSON.stringify(task),
       });
       if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || "Could not save task.");
+        const data = await response.json().catch(() => ({}));
+        throw new Error(errorDetail(data, "Could not save task."));
       }
 
       setTitle("");
@@ -322,8 +332,8 @@ export default function App() {
         }
       );
       if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || "Could not update task.");
+        const data = await response.json().catch(() => ({}));
+        throw new Error(errorDetail(data, "Could not update task."));
       }
       const updatedTask = await response.json();
       setTasks((current) =>
@@ -358,8 +368,8 @@ export default function App() {
         `${API}/tasks/${encodeURIComponent(task.id)}`,
         { method: "DELETE" }
       );
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Could not delete task.");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(errorDetail(data, "Could not delete task."));
       if (data.deleted !== true || data.task_id !== task.id) {
         throw new Error("The server didn't confirm this task deletion.");
       }
@@ -426,7 +436,7 @@ export default function App() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const detail = data.detail || "TaskMate couldn't get a response. Please try again.";
+        const detail = errorDetail(data, "TaskMate couldn't get a response. Please try again.");
         throw new Error(detail);
       }
       if (data.action === "create_task") {

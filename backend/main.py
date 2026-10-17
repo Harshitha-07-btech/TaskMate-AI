@@ -11,8 +11,16 @@ from armoriq_sdk import (
     ArmorIQClient,
     ArmorIQException,
     ConfigurationException,
+    IntentMismatchException,
+    InvalidTokenException,
+    MCPInvocationException,
     PolicyBlockedException,
     PolicyHoldException,
+)
+from armoriq_sdk.config import (
+    ArmorIQConfigError,
+    load_armoriq_config,
+    resolve_env_reference,
 )
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -165,8 +173,56 @@ def get_armoriq_client() -> ArmorIQClient:
     if _armoriq_client is None:
         with _armoriq_client_lock:
             if _armoriq_client is None:
-                _armoriq_client = ArmorIQClient.from_config(ARMORIQ_CONFIG)
+                _armoriq_client = build_armoriq_client(ARMORIQ_CONFIG)
     return _armoriq_client
+
+
+def mcp_credentials_from_config(config) -> dict:
+    """Resolve each MCP server's auth from armoriq.yaml for the X-Armoriq-MCP-Auth header.
+
+    ArmorIQClient.from_config() (SDK 0.6.10) ignores mcp_servers[].auth, and
+    `armoriq register` uploads the token as the literal "$ENV_NAME" string, so
+    without this the proxy reaches the MCP server with the wrong bearer token
+    and the MCP server's 401 surfaces as InvalidTokenException.
+    """
+    credentials = {}
+    for server in config.mcp_servers:
+        if server.auth.type == "bearer":
+            token = resolve_env_reference(server.auth.token or "")
+            if not token:
+                raise ConfigurationException(
+                    f"Bearer token for MCP server '{server.id}' resolved to an empty value."
+                )
+            credentials[server.id] = {"authType": "bearer", "token": token}
+        elif server.auth.type == "api_key":
+            api_key = resolve_env_reference(server.auth.api_key or "")
+            if not api_key:
+                raise ConfigurationException(
+                    f"API key for MCP server '{server.id}' resolved to an empty value."
+                )
+            credentials[server.id] = {"authType": "api_key", "apiKey": api_key}
+    return credentials
+
+
+def build_armoriq_client(config_path: str) -> ArmorIQClient:
+    # Mirrors ArmorIQClient.from_config, adding the per-MCP credentials it omits.
+    try:
+        config = load_armoriq_config(config_path)
+    except ArmorIQConfigError as exc:
+        raise ConfigurationException(f"Invalid ArmorIQ config: {exc}") from exc
+    api_key = config.identity.resolved_api_key()
+    if not api_key:
+        raise ConfigurationException("API key resolved to empty value from config/environment.")
+    return ArmorIQClient(
+        api_key=api_key,
+        user_id=config.identity.user_id,
+        agent_id=config.identity.agent_id,
+        proxy_endpoint=config.proxy.url,
+        timeout=float(config.proxy.timeout),
+        max_retries=int(config.proxy.max_retries),
+        use_production=(config.environment == "production"),
+        mcp_credentials=mcp_credentials_from_config(config),
+    )
 
 
 def normalize_task_arguments(arguments: dict) -> dict:
@@ -249,7 +305,7 @@ def extract_mcp_result(invocation) -> object:
 
 def invoke_task_action(model: str, prompt: str, action: str, params: dict):
     client = get_armoriq_client()
-    plan = client.capture_plan(
+    plan_capture = client.capture_plan(
         llm=model,
         prompt=prompt,
         plan={
@@ -257,7 +313,7 @@ def invoke_task_action(model: str, prompt: str, action: str, params: dict):
             "steps": [{"action": action, "mcp": MCP_SERVER_ID, "params": params}],
         },
     )
-    intent_token = client.get_intent_token(plan, validity_seconds=300)
+    intent_token = client.get_intent_token(plan_capture, validity_seconds=300)
     return client.invoke(
         mcp=MCP_SERVER_ID,
         action=action,
@@ -496,6 +552,18 @@ def agent_chat(request: AgentChatRequest):
 
     try:
         invocation = invoke_task_action(model, request.message, action, params)
+    except InvalidTokenException as exc:
+        logger.warning("ArmorIQ rejected token for %s.%s: %s", MCP_SERVER_ID, action, str(exc))
+        raise HTTPException(
+            status_code=502,
+            detail="ArmorIQ couldn't issue or validate the fresh intent token. The task action was not confirmed.",
+        ) from exc
+    except IntentMismatchException as exc:
+        logger.warning("ArmorIQ found a plan/action mismatch for %s.%s", MCP_SERVER_ID, action)
+        raise HTTPException(
+            status_code=409,
+            detail="The task action did not match its captured intent plan. No action was confirmed.",
+        ) from exc
     except PolicyBlockedException as exc:
         logger.warning("ArmorIQ blocked %s.%s", MCP_SERVER_ID, action)
         raise HTTPException(
@@ -507,6 +575,12 @@ def agent_chat(request: AgentChatRequest):
         raise HTTPException(
             status_code=403,
             detail="ArmorIQ requires approval before that task action can run.",
+        ) from exc
+    except MCPInvocationException as exc:
+        logger.warning("ArmorIQ MCP invocation failed for %s.%s", MCP_SERVER_ID, action)
+        raise HTTPException(
+            status_code=502,
+            detail="ArmorIQ could not complete the MCP invocation. The task action was not confirmed.",
         ) from exc
     except ConfigurationException as exc:
         logger.error("ArmorIQ configuration is unavailable for task actions")
