@@ -2,6 +2,7 @@ services:
   - type: web
     name: taskmate-mcp
     runtime: python
+    plan: free
     autoDeployTrigger: 'off'
     buildCommand: pip install -r mcp-server/requirements.txt
     startCommand: 'uvicorn server:app --app-dir mcp-server --host 0.0.0.0 --port $PORT'
