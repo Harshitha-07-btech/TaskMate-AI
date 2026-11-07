@@ -176,6 +176,52 @@ def wait_for_telemetry(timeout: float = 30.0) -> bool:
     return not not_done
 
 
+def _invoke_with_jwt_fix(
+    client: ArmorIQClient,
+    *,
+    mcp: str,
+    action: str,
+    intent_token: object,
+    params: dict | None = None,
+    **kwargs,
+):
+    http_client = getattr(client, "http_client", None)
+    if http_client is None:
+        return client.invoke(mcp=mcp, action=action, intent_token=intent_token, params=params, **kwargs)
+
+    old_post = http_client.post
+
+    def proxy_post(url, *args, **kw):
+        if "/invoke" in str(url) and isinstance(kw.get("json"), dict):
+            jwt = getattr(intent_token, "jwt_token", None)
+            if jwt:
+                kw["json"]["intent_token"] = jwt
+        resp = old_post(url, *args, **kw)
+        if resp.status_code in (401, 403):
+            try:
+                data = resp.json()
+            except Exception:
+                data = None
+            if isinstance(data, dict) and (
+                data.get("enforcementAction") == "block"
+                or data.get("action") == "block"
+                or data.get("error") == "Action Blocked by Policy"
+            ):
+                raise PolicyBlockedException(
+                    data.get("message") or "Blocked by policy",
+                    enforcement_action=data.get("enforcementAction") or "block",
+                    reason=data.get("reason"),
+                    metadata=data.get("matched_policy"),
+                )
+        return resp
+
+    http_client.post = proxy_post
+    try:
+        return client.invoke(mcp=mcp, action=action, intent_token=intent_token, params=params, **kwargs)
+    finally:
+        http_client.post = old_post
+
+
 def run_protected_action(
     client: ArmorIQClient,
     *,
@@ -233,7 +279,8 @@ def run_protected_action(
         started = time.perf_counter()
         span_status, span_error = "error", None
         try:
-            invocation = client.invoke(
+            invocation = _invoke_with_jwt_fix(
+                client,
                 mcp=MCP_SERVER_ID,
                 action=action,
                 intent_token=token,

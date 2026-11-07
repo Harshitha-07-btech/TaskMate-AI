@@ -63,8 +63,8 @@ _whatsapp_provider = WhatsAppCloudProvider()
 # with no cap: a quota 429 carried Retry-After of ~34,000 s and held a chat
 # request (and the UI) for hours. So: never retry 429, retry transient errors
 # once, bound each HTTP call, and enforce a wall-clock deadline on the whole call.
-GEMINI_TIMEOUT_SECONDS = float(os.getenv("GEMINI_TIMEOUT_SECONDS", "30"))
-GEMINI_DEADLINE_SECONDS = float(os.getenv("GEMINI_DEADLINE_SECONDS", "60"))
+GEMINI_TIMEOUT_SECONDS = float(os.getenv("GEMINI_TIMEOUT_SECONDS", "60"))
+GEMINI_DEADLINE_SECONDS = float(os.getenv("GEMINI_DEADLINE_SECONDS", "90"))
 GEMINI_HTTP_OPTIONS = genai_types.HttpOptions(
     timeout=int(GEMINI_TIMEOUT_SECONDS * 1000),
     retry_options=genai_types.HttpRetryOptions(
