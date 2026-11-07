@@ -913,7 +913,7 @@ def agent_chat(request: AgentChatRequest):
     started = perf_counter()
     # Never log the message text: it can contain personal task details.
     logger.info("request=%s chat received (%d chars)", request_id, len(request.message))
-    model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip() or "gemini-3.8-flash"
+    model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip() or "gemini-3.5-flash-lite"
     zone = resolve_timezone(request.timezone) if request.timezone else default_timezone()
     local_now = datetime.now(zone)
     system_instruction = (
