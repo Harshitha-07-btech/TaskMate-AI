@@ -15,7 +15,7 @@
 
 | 🌐 Live App | 🎬 Demo Video | 📝 Medium Article | 💻 GitHub |
 |:---:|:---:|:---:|:---:|
-| [Open TaskMate](https://taskmate-frontend-5kp9.onrender.com) | [Watch Demo](https://youtu.be/YOUR_VIDEO_ID) | [Coming Soon](#) | [View Code](https://github.com/Harshitha-07-btech/TaskMate-AI) |
+| [Open TaskMate](https://taskmate-frontend-5kp9.onrender.com) | [Watch Demo](https://youtu.be/YOUR_VIDEO_ID) | [Read Article](https://medium.com/@renatiharshitha3/building-taskmate-ai-with-postgresql-google-gemini-and-armoriq-63c9294d5ddb) | [View Code](https://github.com/Harshitha-07-btech/TaskMate-AI) |
 
 > Built for the **ArmorIQ Flow State Hackathon**
 
@@ -163,7 +163,7 @@ Made by [Harshitha](https://github.com/Harshitha-07-btech)
 
 [🌐 Live App](https://taskmate-frontend-5kp9.onrender.com) &nbsp;·&nbsp;
 [💻 GitHub](https://github.com/Harshitha-07-btech/TaskMate-AI) &nbsp;·&nbsp;
-[📝 Medium](https://medium.com) &nbsp;·&nbsp;
+[📝 Medium](https://medium.com/@renatiharshitha3/building-taskmate-ai-with-postgresql-google-gemini-and-armoriq-63c9294d5ddb) &nbsp;·&nbsp;
 [🔒 ArmorIQ](https://armoriq.ai)
 
 </div>
