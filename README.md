@@ -13,9 +13,9 @@
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge"/>
 </p>
 
-| 🌐 Live App | 🎬 Demo Video | 📝 Medium Article | 💻 GitHub |
-|:---:|:---:|:---:|:---:|
-| [Open TaskMate](https://taskmate-frontend-5kp9.onrender.com) | [Watch Demo](https://youtu.be/YOUR_VIDEO_ID) | [Read Article](https://medium.com/@renatiharshitha3/building-taskmate-ai-with-postgresql-google-gemini-and-armoriq-63c9294d5ddb) | [View Code](https://github.com/Harshitha-07-btech/TaskMate-AI) |
+| 🌐 Live App | 📝 Medium Article | 💻 GitHub |
+|:---:|:---:|:---:|
+| [Open TaskMate](https://taskmate-frontend-5kp9.onrender.com) | [Read Article](https://medium.com/@renatiharshitha3/building-taskmate-ai-with-postgresql-google-gemini-and-armoriq-63c9294d5ddb) | [View Code](https://github.com/Harshitha-07-btech/TaskMate-AI) |
 
 > Built for the **ArmorIQ Flow State Hackathon**
 
