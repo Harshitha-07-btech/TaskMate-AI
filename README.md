@@ -149,4 +149,21 @@ taskmate-ai/
 
 ## 📄 License
 
-MIT
+MIT — see [LICENSE](LICENSE) for details.
+
+---
+
+<div align="center">
+
+**Built with ❤️ for the [ArmorIQ Flow State Hackathon](https://armoriq.ai)**
+
+Made by [Harshitha](https://github.com/Harshitha-07-btech)
+
+<br/>
+
+[🌐 Live App](https://taskmate-frontend-5kp9.onrender.com) &nbsp;·&nbsp;
+[💻 GitHub](https://github.com/Harshitha-07-btech/TaskMate-AI) &nbsp;·&nbsp;
+[📝 Medium](https://medium.com) &nbsp;·&nbsp;
+[🔒 ArmorIQ](https://armoriq.ai)
+
+</div>
